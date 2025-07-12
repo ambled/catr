@@ -1,0 +1,126 @@
+// src/lib/stores/storage.ts
+import { browser } from '$app/environment';
+import type { Wallet, TokenBalance, TokenPrice, Transaction } from '$lib/types/index.js';
+
+class StorageService {
+  private getItem<T>(key: string): T[] {
+    if (!browser) return [];
+    try {
+      const item = localStorage.getItem(key);
+      return item ? JSON.parse(item) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  private setItem<T>(key: string, data: T[]): void {
+    if (!browser) return;
+    try {
+      localStorage.setItem(key, JSON.stringify(data));
+    } catch (error) {
+      console.error('Failed to save to localStorage:', error);
+    }
+  }
+
+  // Wallets
+  getWallets(): Wallet[] {
+    return this.getItem<Wallet>('wallets');
+  }
+
+  addWallet(wallet: Omit<Wallet, 'id'>): void {
+    const wallets = this.getWallets();
+    const newWallet: Wallet = {
+      ...wallet,
+      id: Date.now(),
+      created_at: new Date().toISOString()
+    };
+    wallets.push(newWallet);
+    this.setItem('wallets', wallets);
+  }
+
+  removeWallet(id: number): void {
+    const wallets = this.getWallets().filter(w => w.id !== id);
+    this.setItem('wallets', wallets);
+  }
+
+  updateWalletSync(address: string): void {
+    const wallets = this.getWallets();
+    const wallet = wallets.find(w => w.address === address);
+    if (wallet) {
+      wallet.last_sync = new Date().toISOString();
+      this.setItem('wallets', wallets);
+    }
+  }
+
+  // Token Balances
+  getTokenBalances(): TokenBalance[] {
+    return this.getItem<TokenBalance>('token_balances');
+  }
+
+  setTokenBalances(balances: TokenBalance[]): void {
+    this.setItem('token_balances', balances);
+  }
+
+  upsertTokenBalance(balance: TokenBalance): void {
+    const balances = this.getTokenBalances();
+    const index = balances.findIndex(b => 
+      b.wallet_address === balance.wallet_address && 
+      b.symbol === balance.symbol && 
+      b.network === balance.network
+    );
+    
+    if (index >= 0) {
+      balances[index] = balance;
+    } else {
+      balances.push(balance);
+    }
+    
+    this.setItem('token_balances', balances);
+  }
+
+  // Token Prices
+  getTokenPrices(): TokenPrice[] {
+    return this.getItem<TokenPrice>('token_prices');
+  }
+
+  upsertTokenPrice(price: TokenPrice): void {
+    const prices = this.getTokenPrices();
+    const index = prices.findIndex(p => p.symbol === price.symbol);
+    
+    if (index >= 0) {
+      prices[index] = price;
+    } else {
+      prices.push(price);
+    }
+    
+    this.setItem('token_prices', prices);
+  }
+
+  // Transactions
+  getTransactions(): Transaction[] {
+    return this.getItem<Transaction>('transactions');
+  }
+
+  addTransactions(transactions: Transaction[]): void {
+    const existing = this.getTransactions();
+    const combined = [...existing];
+    
+    transactions.forEach(tx => {
+      if (!combined.find(t => t.id === tx.id)) {
+        combined.push(tx);
+      }
+    });
+    
+    this.setItem('transactions', combined);
+  }
+
+  getTransactionsByWallet(address: string): Transaction[] {
+    return this.getTransactions().filter(tx => tx.wallet_address === address);
+  }
+
+  getTransactionCount(address: string): number {
+    return this.getTransactionsByWallet(address).length;
+  }
+}
+
+export const storage = new StorageService();
