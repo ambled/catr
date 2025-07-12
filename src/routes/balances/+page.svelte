@@ -35,6 +35,9 @@
     if (useRealAPI) {
       console.clear();
       console.log('🚀 Starting balance refresh with Data API v1 (with pagination)');
+      // Clear existing balances when switching to real API
+      console.log('🧹 Clearing existing balances...');
+      storage.clearTokenBalances();
     }
 
     try {
@@ -54,30 +57,12 @@
   }
 
   async function refreshDummyBalances() {
-    // Generate dummy data for testing
-    const dummyBalances: TokenBalance[] = [];
+    // Clear existing balances first
+    storage.clearTokenBalances();
     
-    for (const wallet of wallets) {
-      for (const symbol of tokenSymbols) {
-        const balance = (Math.random() * 100).toFixed(6);
-        const price = symbol.includes('ETH') ? '2940.00' : 
-                     symbol.includes('USDC') ? '1.00' : 
-                     (Math.random() * 10 + 1).toFixed(2);
-        dummyBalances.push({
-          wallet_address: wallet.address,
-          symbol,
-          name: symbol,
-          balance,
-          price,
-          value: calculateValue(balance, price),
-          network: symbol.startsWith('ARB') ? 'arb-mainnet' : 'eth-mainnet',
-          decimals: 18,
-          updated_at: new Date().toISOString()
-        });
-      }
-    }
-
-    storage.setTokenBalances(dummyBalances);
+    // Don't generate dummy data - just leave balances empty
+    // This way the table will show 0.000000 for all tokens
+    console.log('📊 Dummy mode: Showing zero balances for all tokens');
   }
 
   async function refreshRealBalances() {
@@ -86,6 +71,9 @@
     
     for (const wallet of wallets) {
       console.log(`\n🔍 Processing wallet: ${wallet.address}`);
+      
+      // Clear existing balances for this wallet first
+      storage.clearWalletBalances(wallet.address);
       
       try {
         console.log(`\n📡 Fetching from both networks (with pagination)...`);
@@ -166,6 +154,15 @@
       console.error('Failed to copy to clipboard:', err);
     }
   }
+
+  // Clear all stored data
+  function clearAllData() {
+    if (confirm('Are you sure you want to clear all stored balance data?')) {
+      storage.clearTokenBalances();
+      loadBalances();
+      console.log('🧹 All balance data cleared');
+    }
+  }
 </script>
 
 <div class="container">
@@ -182,6 +179,9 @@
       <button onclick={refreshBalances} disabled={loading} class="btn btn-primary">
         {loading ? 'Loading...' : 'Refresh Balances'}
       </button>
+      <button onclick={clearAllData} class="btn btn-secondary">
+        Clear Data
+      </button>
     </div>
   </div>
 
@@ -189,7 +189,13 @@
     <div class="info">
       <strong>Info:</strong> 
       <pre>{error}</pre>
-      <small>Using Alchemy Data API v1 with pagination support. Check console for detailed logs.</small>
+      <small>
+        {#if useRealAPI}
+          Using real API data. Old dummy data has been cleared.
+        {:else}
+          Dummy mode: All balances show as zero. Turn on "Use Real API" to fetch actual data.
+        {/if}
+      </small>
     </div>
   {/if}
 
@@ -225,10 +231,10 @@
               </td>
               {#each tokenSymbols as symbol}
                 {@const balance = getBalanceForWalletAndToken(wallet.address, symbol)}
-                <td title={balance ? `${balance.name || balance.symbol}: ${balance.balance} (${balance.decimals} decimals)` : '0'}>
+                <td title={balance ? `${balance.name || balance.symbol}: ${balance.balance} (${balance.decimals} decimals)` : 'No balance found'}>
                   {balance?.balance || '0.000000'}
                 </td>
-                <td title={balance ? `Value: $${balance.value} (${balance.balance} × $${balance.price})` : '$0'}>
+                <td title={balance ? `Value: $${balance.value} (${balance.balance} × $${balance.price})` : 'No value'}>
                   ${balance?.value || '0.00000'}
                 </td>
               {/each}
@@ -239,30 +245,29 @@
     </div>
   {/if}
 
-  <div class="found-tokens">
-    <h3>🔍 Expected vs Found Tokens:</h3>
-    <div class="token-comparison">
-      <div class="expected-tokens">
-        <h4>Expected Tokens:</h4>
-        <ul>
-          <li>MAINEMAID (0x329c6e459ffa7475718838145e5e85802db2a303)</li>
-          <li>ARBANT (0xa78d8321b20c4ef90ecd72f2588aa985a4bdb684)</li>
-          <li>ARBUSDC (0xaf88d065e77c8cc2239327c5edb3a432268e5831)</li>
-          <li>MAINETH (Native ETH on Ethereum)</li>
-          <li>ARBETH (Native ETH on Arbitrum)</li>
-        </ul>
-      </div>
-      <div class="found-tokens-list">
-        <h4>Found in Response:</h4>
-        <ul>
-          <li>✅ MAINEMAID (0x329c6e459ffa7475718838145e5e85802db2a303) - EMAID</li>
-          <li>✅ ARBANT (0xa78d8321b20c4ef90ecd72f2588aa985a4bdb684) - ANT</li>
-          <li>✅ ARBUSDC (0xaf88d065e77c8cc2239327c5edb3a432268e5831) - USDC</li>
-          <li>✅ MAINETH (Native ETH on eth-mainnet)</li>
-          <li>✅ ARBETH (Native ETH on arb-mainnet)</li>
-        </ul>
-      </div>
+  <div class="data-status">
+    <h3>📊 Current Data Status:</h3>
+    <div class="status-info">
+      <p>
+        <strong>Mode:</strong> {useRealAPI ? 'Real API Data' : 'Dummy Mode (Zero Balances)'}
+      </p>
+      <p>
+        <strong>Total stored balances:</strong> {balances.length}
+      </p>
+      <p>
+        <strong>Last update:</strong> {balances.length > 0 ? new Date(Math.max(...balances.map(b => new Date(b.updated_at).getTime()))).toLocaleString() : 'Never'}
+      </p>
     </div>
+  </div>
+
+  <div class="instructions">
+    <h3>🔧 How to get clean data:</h3>
+    <ol>
+      <li>Click "Clear Data" to remove any leftover dummy data</li>
+      <li>Turn on "Use Real API" toggle</li>
+      <li>Click "Refresh Balances" to fetch real data</li>
+      <li>Check console for detailed API response logging</li>
+    </ol>
   </div>
 </div>
 
@@ -363,7 +368,7 @@
     word-wrap: break-word;
   }
   
-  .found-tokens {
+  .data-status {
     margin-top: 2rem;
     padding: 1rem;
     border: 1px solid #dee2e6;
@@ -371,38 +376,35 @@
     background-color: #f8f9fa;
   }
   
-  .found-tokens h3 {
+  .data-status h3 {
     margin-top: 0;
     margin-bottom: 1rem;
   }
   
-  .token-comparison {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 2rem;
+  .status-info p {
+    margin: 0.5rem 0;
   }
   
-  .expected-tokens, .found-tokens-list {
+  .instructions {
+    margin-top: 2rem;
     padding: 1rem;
-    border: 1px solid #ddd;
+    border: 1px solid #ffeaa7;
     border-radius: 4px;
-    background-color: white;
+    background-color: #fff9e6;
   }
   
-  .expected-tokens h4, .found-tokens-list h4 {
+  .instructions h3 {
     margin-top: 0;
     margin-bottom: 1rem;
   }
   
-  .expected-tokens ul, .found-tokens-list ul {
+  .instructions ol {
     margin: 0;
     padding-left: 1.5rem;
   }
   
-  .expected-tokens li, .found-tokens-list li {
+  .instructions li {
     margin-bottom: 0.5rem;
-    font-family: monospace;
-    font-size: 0.9rem;
   }
   
   .no-wallets {
@@ -466,6 +468,11 @@
     color: white;
   }
   
+  .btn-secondary {
+    background-color: #6c757d;
+    color: white;
+  }
+  
   .btn:disabled {
     opacity: 0.6;
     cursor: not-allowed;
@@ -479,10 +486,6 @@
     
     .controls {
       justify-content: center;
-    }
-    
-    .token-comparison {
-      grid-template-columns: 1fr;
     }
   }
 </style>

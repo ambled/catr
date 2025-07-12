@@ -61,6 +61,17 @@ class StorageService {
     this.setItem('token_balances', balances);
   }
 
+  // Clear all token balances (useful when switching to real API)
+  clearTokenBalances(): void {
+    this.setItem('token_balances', []);
+  }
+
+  // Clear balances for specific wallet
+  clearWalletBalances(walletAddress: string): void {
+    const balances = this.getTokenBalances().filter(b => b.wallet_address !== walletAddress);
+    this.setItem('token_balances', balances);
+  }
+
   upsertTokenBalance(balance: TokenBalance): void {
     const balances = this.getTokenBalances();
     const index = balances.findIndex(b => 
