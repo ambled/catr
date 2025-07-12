@@ -6,27 +6,24 @@ BigNumber.config({
   ROUNDING_MODE: BigNumber.ROUND_DOWN
 });
 
-export function formatBalance(balance: string, decimals: number = 6): string {
+export function formatBalance(balance: string, decimals: number = 18, displayDecimals: number = 6): string {
   try {
     let bn: BigNumber;
     
-    // Handle different input formats
+    // Handle hex input
     if (typeof balance === 'string' && balance.startsWith('0x')) {
-      // Hex value - convert from wei
       bn = new BigNumber(balance, 16);
-      bn = bn.dividedBy(new BigNumber(10).pow(18));
-    } else if (typeof balance === 'string' && balance.includes('.')) {
-      // Already a decimal number
-      bn = new BigNumber(balance);
     } else {
-      // Integer string - assume it's in wei
       bn = new BigNumber(balance);
-      bn = bn.dividedBy(new BigNumber(10).pow(18));
     }
     
-    return bn.toFixed(decimals);
+    // Convert from token's native decimals to human readable
+    const divisor = new BigNumber(10).pow(decimals);
+    const result = bn.dividedBy(divisor);
+    
+    return result.toFixed(displayDecimals);
   } catch (error) {
-    console.error('Error formatting balance:', error, 'Input:', balance);
+    console.error('Error formatting balance:', error, 'Input:', balance, 'Decimals:', decimals);
     return '0.000000';
   }
 }

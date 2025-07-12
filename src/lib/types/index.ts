@@ -15,6 +15,7 @@ export interface TokenBalance {
   price: string;
   value: string;
   network: string;
+  decimals?: number;
   updated_at: string;
 }
 
@@ -46,6 +47,7 @@ export interface AlchemyResponse {
       symbol: string;
       name?: string;
       network?: string;
+      decimals?: number;
     }>;
   };
 }

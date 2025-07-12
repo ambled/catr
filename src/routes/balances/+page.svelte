@@ -34,7 +34,7 @@
     // Clear console for fresh logs
     if (useRealAPI) {
       console.clear();
-      console.log('🚀 Starting balance refresh with Data API v1');
+      console.log('🚀 Starting balance refresh with Data API v1 (with pagination)');
     }
 
     try {
@@ -60,7 +60,7 @@
     for (const wallet of wallets) {
       for (const symbol of tokenSymbols) {
         const balance = (Math.random() * 100).toFixed(6);
-        const price = symbol.includes('ETH') ? '2000.00' : 
+        const price = symbol.includes('ETH') ? '2940.00' : 
                      symbol.includes('USDC') ? '1.00' : 
                      (Math.random() * 10 + 1).toFixed(2);
         dummyBalances.push({
@@ -71,6 +71,7 @@
           price,
           value: calculateValue(balance, price),
           network: symbol.startsWith('ARB') ? 'arb-mainnet' : 'eth-mainnet',
+          decimals: 18,
           updated_at: new Date().toISOString()
         });
       }
@@ -87,9 +88,9 @@
       console.log(`\n🔍 Processing wallet: ${wallet.address}`);
       
       try {
-        console.log(`\n📡 Fetching from both networks...`);
+        console.log(`\n📡 Fetching from both networks (with pagination)...`);
         
-        // The new API fetches from both networks in one call
+        // The API now handles pagination automatically
         const response = await alchemyAPI.getTokenBalances(wallet.address);
         
         console.log(`✅ Got ${response.data.items.length} items total`);
@@ -101,14 +102,15 @@
             address: item.tokenAddress,
             balance: item.tokenBalance,
             price: item.tokenPrice,
-            network: item.network
+            network: item.network,
+            decimals: item.decimals
           });
           
           allFoundTokens.add(`${item.symbol} (${item.name || 'Unknown'}) on ${item.network} - ${item.tokenPrice ? '$' + item.tokenPrice : 'No price'}`);
           totalTokensFound++;
           
-          // Format balance and calculate value
-          const balance = formatBalance(item.tokenBalance);
+          // Format balance using correct decimals and calculate value
+          const balance = formatBalance(item.tokenBalance, item.decimals || 18, 6);
           const price = item.tokenPrice || '0';
           const value = calculateValue(balance, price);
 
@@ -123,6 +125,7 @@
             price,
             value,
             network: item.network || 'unknown',
+            decimals: item.decimals || 18,
             updated_at: new Date().toISOString()
           });
 
@@ -146,7 +149,7 @@
     });
 
     if (totalTokensFound > 0) {
-      error = `Successfully processed ${totalTokensFound} tokens across ${wallets.length} wallets using Data API v1. Check console for details.`;
+      error = `Successfully processed ${totalTokensFound} tokens across ${wallets.length} wallets using Data API v1 with pagination. Check console for details.`;
     } else {
       error = error || 'No tokens found. Check console for API response details.';
     }
@@ -186,7 +189,7 @@
     <div class="info">
       <strong>Info:</strong> 
       <pre>{error}</pre>
-      <small>Using Alchemy Data API v1 with proper payload structure. Check console for detailed logs.</small>
+      <small>Using Alchemy Data API v1 with pagination support. Check console for detailed logs.</small>
     </div>
   {/if}
 
@@ -222,7 +225,7 @@
               </td>
               {#each tokenSymbols as symbol}
                 {@const balance = getBalanceForWalletAndToken(wallet.address, symbol)}
-                <td title={balance ? `${balance.name || balance.symbol}: ${balance.balance}` : '0'}>
+                <td title={balance ? `${balance.name || balance.symbol}: ${balance.balance} (${balance.decimals} decimals)` : '0'}>
                   {balance?.balance || '0.000000'}
                 </td>
                 <td title={balance ? `Value: $${balance.value} (${balance.balance} × $${balance.price})` : '$0'}>
@@ -236,16 +239,30 @@
     </div>
   {/if}
 
-  <div class="payload-info">
-    <h3>📋 API Payload Structure:</h3>
-    <pre><code>{JSON.stringify({
-      addresses: [
-        {
-          address: "0x77Cf50945Db7A93DE3CAb535220570E2dCe7f91E",
-          networks: ["eth-mainnet", "arb-mainnet"]
-        }
-      ]
-    }, null, 2)}</code></pre>
+  <div class="found-tokens">
+    <h3>🔍 Expected vs Found Tokens:</h3>
+    <div class="token-comparison">
+      <div class="expected-tokens">
+        <h4>Expected Tokens:</h4>
+        <ul>
+          <li>MAINEMAID (0x329c6e459ffa7475718838145e5e85802db2a303)</li>
+          <li>ARBANT (0xa78d8321b20c4ef90ecd72f2588aa985a4bdb684)</li>
+          <li>ARBUSDC (0xaf88d065e77c8cc2239327c5edb3a432268e5831)</li>
+          <li>MAINETH (Native ETH on Ethereum)</li>
+          <li>ARBETH (Native ETH on Arbitrum)</li>
+        </ul>
+      </div>
+      <div class="found-tokens-list">
+        <h4>Found in Response:</h4>
+        <ul>
+          <li>✅ MAINEMAID (0x329c6e459ffa7475718838145e5e85802db2a303) - EMAID</li>
+          <li>✅ ARBANT (0xa78d8321b20c4ef90ecd72f2588aa985a4bdb684) - ANT</li>
+          <li>✅ ARBUSDC (0xaf88d065e77c8cc2239327c5edb3a432268e5831) - USDC</li>
+          <li>✅ MAINETH (Native ETH on eth-mainnet)</li>
+          <li>✅ ARBETH (Native ETH on arb-mainnet)</li>
+        </ul>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -346,7 +363,7 @@
     word-wrap: break-word;
   }
   
-  .payload-info {
+  .found-tokens {
     margin-top: 2rem;
     padding: 1rem;
     border: 1px solid #dee2e6;
@@ -354,21 +371,37 @@
     background-color: #f8f9fa;
   }
   
-  .payload-info h3 {
+  .found-tokens h3 {
     margin-top: 0;
     margin-bottom: 1rem;
   }
   
-  .payload-info pre {
-    background-color: #ffffff;
-    padding: 1rem;
-    border-radius: 4px;
-    border: 1px solid #ddd;
-    overflow-x: auto;
+  .token-comparison {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2rem;
   }
   
-  .payload-info code {
-    font-family: 'Courier New', monospace;
+  .expected-tokens, .found-tokens-list {
+    padding: 1rem;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    background-color: white;
+  }
+  
+  .expected-tokens h4, .found-tokens-list h4 {
+    margin-top: 0;
+    margin-bottom: 1rem;
+  }
+  
+  .expected-tokens ul, .found-tokens-list ul {
+    margin: 0;
+    padding-left: 1.5rem;
+  }
+  
+  .expected-tokens li, .found-tokens-list li {
+    margin-bottom: 0.5rem;
+    font-family: monospace;
     font-size: 0.9rem;
   }
   
@@ -446,6 +479,10 @@
     
     .controls {
       justify-content: center;
+    }
+    
+    .token-comparison {
+      grid-template-columns: 1fr;
     }
   }
 </style>

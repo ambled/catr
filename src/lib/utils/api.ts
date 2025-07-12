@@ -14,15 +14,15 @@ export class AlchemyAPI {
     };
   }
 
-  async getTokenBalances(address: string, network?: string): Promise<AlchemyResponse> {
+  async getTokenBalances(address: string, pageKey?: string): Promise<AlchemyResponse> {
     const url = this.getDataApiUrl();
     
-    console.log(`🔍 Fetching token balances for ${address}`);
+    console.log(`🔍 Fetching token balances for ${address}${pageKey ? ` (pageKey: ${pageKey})` : ''}`);
     console.log(`📡 Data API URL: ${url}`);
     
     try {
-      // Use the correct payload structure
-      const requestBody = {
+      // Build the request payload
+      const requestBody: any = {
         addresses: [
           {
             address: address,
@@ -30,6 +30,11 @@ export class AlchemyAPI {
           }
         ]
       };
+
+      // Add pageKey if provided for pagination
+      if (pageKey) {
+        requestBody.pageKey = pageKey;
+      }
       
       console.log(`📤 Request body:`, JSON.stringify(requestBody, null, 2));
       
@@ -57,62 +62,65 @@ export class AlchemyAPI {
 
       // Transform the response to match our expected format
       const items = [];
+      let nextPageKey = result.data?.pageKey;
       
-      // Process the response data
-      if (result.data && Array.isArray(result.data)) {
-        console.log(`📊 Processing ${result.data.length} address responses`);
+      // Process the tokens array
+      if (result.data?.tokens && Array.isArray(result.data.tokens)) {
+        console.log(`📊 Processing ${result.data.tokens.length} tokens`);
         
-        for (const addressData of result.data) {
-          console.log(`🔍 Processing address data:`, addressData);
-          
-          if (addressData.networks) {
-            for (const networkData of addressData.networks) {
-              console.log(`🌐 Processing network: ${networkData.network}`);
-              
-              if (networkData.tokens && Array.isArray(networkData.tokens)) {
-                for (const token of networkData.tokens) {
-                  console.log(`🪙 Processing token:`, {
-                    symbol: token.symbol,
-                    name: token.name,
-                    address: token.contractAddress,
-                    balance: token.balance,
-                    price: token.price,
-                    network: networkData.network
-                  });
-                  
-                  // Map to our desired symbols
-                  const mappedSymbol = this.mapToOurSymbol(token.contractAddress, token.symbol, networkData.network);
-                  
-                  if (mappedSymbol && token.balance && token.balance !== '0') {
-                    items.push({
-                      tokenAddress: token.contractAddress,
-                      tokenBalance: token.balance,
-                      tokenPrice: token.price || '0',
-                      symbol: mappedSymbol,
-                      name: token.name || mappedSymbol,
-                      network: networkData.network
-                    });
-                  }
-                }
-              }
-              
-              // Add ETH balance if available
-              if (networkData.nativeToken) {
-                const ethSymbol = networkData.network === 'eth-mainnet' ? 'MAINETH' : 'ARBETH';
-                console.log(`💰 Adding ETH balance for ${networkData.network}:`, networkData.nativeToken);
-                
-                items.push({
-                  tokenAddress: '0x0000000000000000000000000000000000000000',
-                  tokenBalance: networkData.nativeToken.balance,
-                  tokenPrice: networkData.nativeToken.price || '0',
-                  symbol: ethSymbol,
-                  name: networkData.network === 'eth-mainnet' ? 'Ethereum (Main)' : 'Ethereum (Arbitrum)',
-                  network: networkData.network
-                });
-              }
+        for (const token of result.data.tokens) {
+          console.log(`🔍 Processing token:`, {
+            address: token.address,
+            network: token.network,
+            tokenAddress: token.tokenAddress,
+            balance: token.tokenBalance,
+            symbol: token.tokenMetadata?.symbol,
+            name: token.tokenMetadata?.name,
+            decimals: token.tokenMetadata?.decimals,
+            price: token.tokenPrices?.[0]?.value
+          });
+
+          // Handle native tokens (ETH) - these have tokenAddress as null
+          if (token.tokenAddress === null) {
+            const ethSymbol = token.network === 'eth-mainnet' ? 'MAINETH' : 'ARBETH';
+            const ethName = token.network === 'eth-mainnet' ? 'Ethereum (Main)' : 'Ethereum (Arbitrum)';
+            
+            items.push({
+              tokenAddress: '0x0000000000000000000000000000000000000000',
+              tokenBalance: token.tokenBalance,
+              tokenPrice: token.tokenPrices?.[0]?.value || '0',
+              symbol: ethSymbol,
+              name: ethName,
+              network: token.network,
+              decimals: 18
+            });
+          } else {
+            // Handle ERC20 tokens
+            const mappedSymbol = this.mapToOurSymbol(token.tokenAddress, token.tokenMetadata?.symbol, token.network);
+            
+            // Only include tokens we care about and have non-zero balance
+            if (mappedSymbol && token.tokenBalance && token.tokenBalance !== '0x0' && token.tokenBalance !== '0x00000000000000000000000000000000000000000000000000000000000000') {
+              items.push({
+                tokenAddress: token.tokenAddress,
+                tokenBalance: token.tokenBalance,
+                tokenPrice: token.tokenPrices?.[0]?.value || '0',
+                symbol: mappedSymbol,
+                name: token.tokenMetadata?.name || mappedSymbol,
+                network: token.network,
+                decimals: token.tokenMetadata?.decimals || 18
+              });
             }
           }
         }
+      }
+
+      console.log(`✅ Processed ${items.length} relevant tokens`);
+      
+      // If there's a pageKey, fetch the next page
+      if (nextPageKey) {
+        console.log(`🔄 Found pageKey: ${nextPageKey}, fetching next page...`);
+        const nextPageResponse = await this.getTokenBalances(address, nextPageKey);
+        items.push(...nextPageResponse.data.items);
       }
 
       console.log(`✅ Final items array (${items.length} items):`, items);
@@ -126,7 +134,7 @@ export class AlchemyAPI {
     }
   }
 
-  private mapToOurSymbol(contractAddress: string, originalSymbol: string, network: string): string | null {
+  private mapToOurSymbol(contractAddress: string, originalSymbol: string | null, network: string): string | null {
     const address = contractAddress.toLowerCase();
     
     // Your specific token mappings
