@@ -45,6 +45,7 @@ export interface AlchemyResponse {
       tokenPrice: string;
       symbol: string;
       name?: string;
+      network?: string;
     }>;
   };
 }

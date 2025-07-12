@@ -11,7 +11,6 @@
   let loading = $state(false);
   let error = $state('');
   let useRealAPI = $state(false);
-  let useJsonRpc = $state(false);
 
   const tokenSymbols = ['ARBANT', 'ARBETH', 'ARBUSDC', 'MAINETH', 'MAINEMAID'];
 
@@ -35,7 +34,7 @@
     // Clear console for fresh logs
     if (useRealAPI) {
       console.clear();
-      console.log(`🚀 Starting balance refresh with ${useJsonRpc ? 'JSON-RPC' : 'Data API'}`);
+      console.log('🚀 Starting balance refresh with Data API v1');
     }
 
     try {
@@ -81,65 +80,62 @@
   }
 
   async function refreshRealBalances() {
-    const networks = ['eth-mainnet', 'arb-mainnet'];
     const allFoundTokens = new Set<string>();
     let totalTokensFound = 0;
     
     for (const wallet of wallets) {
       console.log(`\n🔍 Processing wallet: ${wallet.address}`);
       
-      for (const network of networks) {
-        try {
-          console.log(`\n📡 Fetching from ${network} using ${useJsonRpc ? 'JSON-RPC' : 'Data API'}...`);
+      try {
+        console.log(`\n📡 Fetching from both networks...`);
+        
+        // The new API fetches from both networks in one call
+        const response = await alchemyAPI.getTokenBalances(wallet.address);
+        
+        console.log(`✅ Got ${response.data.items.length} items total`);
+        
+        for (const item of response.data.items) {
+          console.log(`\n🪙 Processing token:`, {
+            symbol: item.symbol,
+            name: item.name,
+            address: item.tokenAddress,
+            balance: item.tokenBalance,
+            price: item.tokenPrice,
+            network: item.network
+          });
           
-          const response = useJsonRpc 
-            ? await alchemyAPI.getTokenBalancesJsonRpc(wallet.address, network)
-            : await alchemyAPI.getTokenBalances(wallet.address, network);
+          allFoundTokens.add(`${item.symbol} (${item.name || 'Unknown'}) on ${item.network} - ${item.tokenPrice ? '$' + item.tokenPrice : 'No price'}`);
+          totalTokensFound++;
           
-          console.log(`✅ Got ${response.data.items.length} items from ${network}`);
-          
-          for (const item of response.data.items) {
-            console.log(`\n🪙 Processing token:`, {
-              symbol: item.symbol,
-              name: item.name,
-              address: item.tokenAddress,
-              balance: item.tokenBalance,
-              price: item.tokenPrice,
-              network: network
-            });
-            
-            allFoundTokens.add(`${item.symbol} (${item.name || 'Unknown'}) - ${item.tokenPrice ? '$' + item.tokenPrice : 'No price'}`);
-            totalTokensFound++;
-            
-            // Format balance and calculate value
-            const balance = formatBalance(item.tokenBalance);
-            const price = item.tokenPrice || '0';
-            const value = calculateValue(balance, price);
+          // Format balance and calculate value
+          const balance = formatBalance(item.tokenBalance);
+          const price = item.tokenPrice || '0';
+          const value = calculateValue(balance, price);
 
-            console.log(`💰 Formatted: Balance=${balance}, Price=${price}, Value=${value}`);
+          console.log(`💰 Formatted: Balance=${balance}, Price=${price}, Value=${value}`);
 
-            // Store balance
-            storage.upsertTokenBalance({
-              wallet_address: wallet.address,
-              symbol: item.symbol,
-              name: item.name,
-              balance,
-              price,
-              value,
-              network,
-              updated_at: new Date().toISOString()
-            });
+          // Store balance
+          storage.upsertTokenBalance({
+            wallet_address: wallet.address,
+            symbol: item.symbol,
+            name: item.name,
+            balance,
+            price,
+            value,
+            network: item.network || 'unknown',
+            updated_at: new Date().toISOString()
+          });
 
-            // Store price
-            storage.upsertTokenPrice({
-              symbol: item.symbol,
-              price,
-              updated_at: new Date().toISOString()
-            });
-          }
-        } catch (networkError) {
-          console.error(`❌ Failed to fetch balances for ${wallet.address} on ${network}:`, networkError);
+          // Store price
+          storage.upsertTokenPrice({
+            symbol: item.symbol,
+            price,
+            updated_at: new Date().toISOString()
+          });
         }
+      } catch (walletError) {
+        console.error(`❌ Failed to fetch balances for ${wallet.address}:`, walletError);
+        error += `\nFailed for ${shortenAddress(wallet.address)}: ${walletError instanceof Error ? walletError.message : 'Unknown error'}`;
       }
     }
 
@@ -149,7 +145,11 @@
       console.log(`  • ${token}`);
     });
 
-    error = `Successfully processed ${totalTokensFound} tokens across ${wallets.length} wallets using ${useJsonRpc ? 'JSON-RPC' : 'Data API'}. Check console for details.`;
+    if (totalTokensFound > 0) {
+      error = `Successfully processed ${totalTokensFound} tokens across ${wallets.length} wallets using Data API v1. Check console for details.`;
+    } else {
+      error = error || 'No tokens found. Check console for API response details.';
+    }
   }
 
   function getBalanceForWalletAndToken(walletAddress: string, symbol: string): TokenBalance | null {
@@ -176,15 +176,6 @@
           <span class="slider"></span>
         </label>
       </div>
-      {#if useRealAPI}
-        <div class="toggle-container">
-          <span class="toggle-label">Use JSON-RPC</span>
-          <label class="switch">
-            <input type="checkbox" bind:checked={useJsonRpc} />
-            <span class="slider"></span>
-          </label>
-        </div>
-      {/if}
       <button onclick={refreshBalances} disabled={loading} class="btn btn-primary">
         {loading ? 'Loading...' : 'Refresh Balances'}
       </button>
@@ -193,15 +184,9 @@
 
   {#if error}
     <div class="info">
-      <strong>Info:</strong> {error}
-      <br>
-      <small>
-        {#if useJsonRpc}
-          Using JSON-RPC API (no prices). Check console for detailed logs.
-        {:else}
-          Using Data API with prices. If you get errors, try enabling "Use JSON-RPC".
-        {/if}
-      </small>
+      <strong>Info:</strong> 
+      <pre>{error}</pre>
+      <small>Using Alchemy Data API v1 with proper payload structure. Check console for detailed logs.</small>
     </div>
   {/if}
 
@@ -251,16 +236,16 @@
     </div>
   {/if}
 
-  <div class="api-info">
-    <h3>📡 API Options:</h3>
-    <div class="api-options">
-      <div class="api-option">
-        <strong>Data API:</strong> Includes token names and prices, but may have stricter format requirements.
-      </div>
-      <div class="api-option">
-        <strong>JSON-RPC API:</strong> More reliable for balance fetching, but no price information included.
-      </div>
-    </div>
+  <div class="payload-info">
+    <h3>📋 API Payload Structure:</h3>
+    <pre><code>{JSON.stringify({
+      addresses: [
+        {
+          address: "0x77Cf50945Db7A93DE3CAb535220570E2dCe7f91E",
+          networks: ["eth-mainnet", "arb-mainnet"]
+        }
+      ]
+    }, null, 2)}</code></pre>
   </div>
 </div>
 
@@ -354,7 +339,14 @@
     color: #0c5460;
   }
   
-  .api-info {
+  .info pre {
+    margin: 0.5rem 0;
+    font-size: 0.9rem;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+  }
+  
+  .payload-info {
     margin-top: 2rem;
     padding: 1rem;
     border: 1px solid #dee2e6;
@@ -362,21 +354,22 @@
     background-color: #f8f9fa;
   }
   
-  .api-info h3 {
+  .payload-info h3 {
     margin-top: 0;
     margin-bottom: 1rem;
   }
   
-  .api-options {
-    display: grid;
-    gap: 0.5rem;
+  .payload-info pre {
+    background-color: #ffffff;
+    padding: 1rem;
+    border-radius: 4px;
+    border: 1px solid #ddd;
+    overflow-x: auto;
   }
   
-  .api-option {
-    padding: 0.5rem;
-    border: 1px solid #ddd;
-    border-radius: 4px;
-    background-color: white;
+  .payload-info code {
+    font-family: 'Courier New', monospace;
+    font-size: 0.9rem;
   }
   
   .no-wallets {

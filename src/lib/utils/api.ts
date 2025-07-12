@@ -7,15 +7,6 @@ export class AlchemyAPI {
     return `https://api.g.alchemy.com/data/v1/${settings.apiKey}/assets/tokens/by-address`;
   }
 
-  private getJsonRpcUrl(network: string): string {
-    const baseUrls: { [key: string]: string } = {
-      'eth-mainnet': 'https://eth-mainnet.g.alchemy.com/v2/',
-      'arb-mainnet': 'https://arb-mainnet.g.alchemy.com/v2/'
-    };
-    
-    return `${baseUrls[network]}${settings.apiKey}`;
-  }
-
   private getHeaders() {
     return {
       'Content-Type': 'application/json',
@@ -23,16 +14,21 @@ export class AlchemyAPI {
     };
   }
 
-  async getTokenBalances(address: string, network: string): Promise<AlchemyResponse> {
+  async getTokenBalances(address: string, network?: string): Promise<AlchemyResponse> {
     const url = this.getDataApiUrl();
     
-    console.log(`🔍 Fetching token balances for ${address} on ${network}`);
+    console.log(`🔍 Fetching token balances for ${address}`);
     console.log(`📡 Data API URL: ${url}`);
     
     try {
+      // Use the correct payload structure
       const requestBody = {
-        addresses: [address], // Changed from 'address' to 'addresses' array
-        network: network
+        addresses: [
+          {
+            address: address,
+            networks: ["eth-mainnet", "arb-mainnet"]
+          }
+        ]
       };
       
       console.log(`📤 Request body:`, JSON.stringify(requestBody, null, 2));
@@ -59,87 +55,74 @@ export class AlchemyAPI {
         throw new Error(`Alchemy Data API error: ${result.error.message}`);
       }
 
-      // Get ETH balance separately using JSON-RPC
-      const ethBalance = await this.getEthBalance(address, network);
-      console.log(`💰 ETH Balance: ${ethBalance}`);
-      
       // Transform the response to match our expected format
       const items = [];
       
-      // Add ETH balance first
-      const ethSymbol = network === 'eth-mainnet' ? 'MAINETH' : 'ARBETH';
-      const ethPrice = await this.getEthPrice(); // Get ETH price
-      
-      items.push({
-        tokenAddress: '0x0000000000000000000000000000000000000000',
-        tokenBalance: ethBalance,
-        tokenPrice: ethPrice,
-        symbol: ethSymbol,
-        name: network === 'eth-mainnet' ? 'Ethereum (Main)' : 'Ethereum (Arbitrum)'
-      });
-
-      // Process the response - the structure might be different
-      let tokenData = result.data;
-      
-      // Handle different possible response structures
-      if (result.data && result.data[address]) {
-        tokenData = result.data[address];
-      } else if (result.data && Array.isArray(result.data)) {
-        tokenData = result.data;
-      } else if (result.data && result.data.tokens) {
-        tokenData = result.data.tokens;
-      }
-
-      if (tokenData && Array.isArray(tokenData)) {
-        console.log(`🪙 Found ${tokenData.length} tokens in data response`);
+      // Process the response data
+      if (result.data && Array.isArray(result.data)) {
+        console.log(`📊 Processing ${result.data.length} address responses`);
         
-        for (const item of tokenData) {
-          console.log(`🔍 Processing token:`, {
-            symbol: item.symbol,
-            name: item.name,
-            address: item.contractAddress || item.address,
-            balance: item.balance,
-            price: item.price,
-            network: network
-          });
+        for (const addressData of result.data) {
+          console.log(`🔍 Processing address data:`, addressData);
           
-          const contractAddress = item.contractAddress || item.address;
-          const mappedSymbol = this.mapToOurSymbol(contractAddress, item.symbol, network);
-          
-          if (mappedSymbol && item.balance && item.balance !== '0') {
-            items.push({
-              tokenAddress: contractAddress,
-              tokenBalance: item.balance,
-              tokenPrice: item.price || '0',
-              symbol: mappedSymbol,
-              name: item.name || mappedSymbol
-            });
+          if (addressData.networks) {
+            for (const networkData of addressData.networks) {
+              console.log(`🌐 Processing network: ${networkData.network}`);
+              
+              if (networkData.tokens && Array.isArray(networkData.tokens)) {
+                for (const token of networkData.tokens) {
+                  console.log(`🪙 Processing token:`, {
+                    symbol: token.symbol,
+                    name: token.name,
+                    address: token.contractAddress,
+                    balance: token.balance,
+                    price: token.price,
+                    network: networkData.network
+                  });
+                  
+                  // Map to our desired symbols
+                  const mappedSymbol = this.mapToOurSymbol(token.contractAddress, token.symbol, networkData.network);
+                  
+                  if (mappedSymbol && token.balance && token.balance !== '0') {
+                    items.push({
+                      tokenAddress: token.contractAddress,
+                      tokenBalance: token.balance,
+                      tokenPrice: token.price || '0',
+                      symbol: mappedSymbol,
+                      name: token.name || mappedSymbol,
+                      network: networkData.network
+                    });
+                  }
+                }
+              }
+              
+              // Add ETH balance if available
+              if (networkData.nativeToken) {
+                const ethSymbol = networkData.network === 'eth-mainnet' ? 'MAINETH' : 'ARBETH';
+                console.log(`💰 Adding ETH balance for ${networkData.network}:`, networkData.nativeToken);
+                
+                items.push({
+                  tokenAddress: '0x0000000000000000000000000000000000000000',
+                  tokenBalance: networkData.nativeToken.balance,
+                  tokenPrice: networkData.nativeToken.price || '0',
+                  symbol: ethSymbol,
+                  name: networkData.network === 'eth-mainnet' ? 'Ethereum (Main)' : 'Ethereum (Arbitrum)',
+                  network: networkData.network
+                });
+              }
+            }
           }
         }
-      } else {
-        console.log(`⚠️ Unexpected data structure:`, tokenData);
       }
 
-      console.log(`✅ Final items array:`, items);
+      console.log(`✅ Final items array (${items.length} items):`, items);
 
       return {
         data: { items }
       };
     } catch (error) {
-      console.error(`❌ API Error for ${address} on ${network}:`, error);
+      console.error(`❌ API Error for ${address}:`, error);
       throw error;
-    }
-  }
-
-  private async getEthPrice(): Promise<string> {
-    try {
-      // Simple price fetch - you could use a different API for this
-      const response = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd');
-      const data = await response.json();
-      return data.ethereum?.usd?.toString() || '2000';
-    } catch (error) {
-      console.warn('Failed to fetch ETH price, using default:', error);
-      return '2000'; // Default ETH price
     }
   }
 
@@ -170,191 +153,10 @@ export class AlchemyAPI {
     return null; // Don't include unknown tokens
   }
 
-  async getEthBalance(address: string, network: string): Promise<string> {
-    const url = this.getJsonRpcUrl(network);
-    
-    console.log(`💰 Fetching ETH balance for ${address} on ${network}`);
-    
-    try {
-      const requestBody = {
-        id: 1,
-        jsonrpc: '2.0',
-        method: 'eth_getBalance',
-        params: [address, 'latest']
-      };
-      
-      console.log(`📤 ETH Balance Request:`, JSON.stringify(requestBody, null, 2));
-      
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: this.getHeaders(),
-        body: JSON.stringify(requestBody)
-      });
-
-      if (!response.ok) {
-        throw new Error(`ETH balance request failed: ${response.status}`);
-      }
-
-      const result = await response.json();
-      console.log(`📦 ETH Balance Response:`, JSON.stringify(result, null, 2));
-      
-      if (result.error) {
-        throw new Error(`ETH balance error: ${result.error.message}`);
-      }
-
-      return result.result || '0x0';
-    } catch (error) {
-      console.warn(`⚠️ Failed to get ETH balance for ${address}:`, error);
-      return '0x0';
-    }
-  }
-
-  // Alternative method using JSON-RPC if Data API continues to have issues
-  async getTokenBalancesJsonRpc(address: string, network: string): Promise<AlchemyResponse> {
-    const url = this.getJsonRpcUrl(network);
-    
-    console.log(`🔍 Fetching token balances via JSON-RPC for ${address} on ${network}`);
-    console.log(`📡 JSON-RPC URL: ${url}`);
-    
-    try {
-      const requestBody = {
-        id: 1,
-        jsonrpc: '2.0',
-        method: 'alchemy_getTokenBalances',
-        params: [address, 'latest']
-      };
-      
-      console.log(`📤 JSON-RPC Request body:`, JSON.stringify(requestBody, null, 2));
-      
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: this.getHeaders(),
-        body: JSON.stringify(requestBody)
-      });
-
-      console.log(`📥 JSON-RPC Response status: ${response.status} ${response.statusText}`);
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error(`❌ JSON-RPC API Error Response:`, errorText);
-        throw new Error(`JSON-RPC API request failed: ${response.status} ${response.statusText}. Response: ${errorText}`);
-      }
-
-      const result = await response.json();
-      console.log(`📦 Raw JSON-RPC Response:`, JSON.stringify(result, null, 2));
-      
-      if (result.error) {
-        console.error(`❌ Alchemy JSON-RPC Error:`, result.error);
-        throw new Error(`Alchemy JSON-RPC error: ${result.error.message} (Code: ${result.error.code})`);
-      }
-
-      // Get ETH balance separately
-      const ethBalance = await this.getEthBalance(address, network);
-      console.log(`💰 ETH Balance: ${ethBalance}`);
-      
-      // Transform the response to match our expected format
-      const items = [];
-      
-      // Add ETH balance first
-      const ethSymbol = network === 'eth-mainnet' ? 'MAINETH' : 'ARBETH';
-      const ethPrice = await this.getEthPrice();
-      
-      items.push({
-        tokenAddress: '0x0000000000000000000000000000000000000000',
-        tokenBalance: ethBalance,
-        tokenPrice: ethPrice,
-        symbol: ethSymbol,
-        name: network === 'eth-mainnet' ? 'Ethereum (Main)' : 'Ethereum (Arbitrum)'
-      });
-
-      // Add token balances from JSON-RPC response
-      if (result.result?.tokenBalances) {
-        console.log(`🪙 Found ${result.result.tokenBalances.length} token balances`);
-        
-        for (const balance of result.result.tokenBalances) {
-          console.log(`🔍 Token: ${balance.contractAddress} = ${balance.tokenBalance}`);
-          
-          // Only include tokens with non-zero balance
-          if (balance.tokenBalance && balance.tokenBalance !== '0x0' && balance.tokenBalance !== '0x') {
-            const symbol = this.mapToOurSymbol(balance.contractAddress, 'UNKNOWN', network);
-            console.log(`📝 Mapped ${balance.contractAddress} to symbol: ${symbol}`);
-            
-            if (symbol) {
-              items.push({
-                tokenAddress: balance.contractAddress,
-                tokenBalance: balance.tokenBalance,
-                tokenPrice: '0', // No price in JSON-RPC response
-                symbol: symbol,
-                name: symbol
-              });
-            }
-          }
-        }
-      }
-
-      console.log(`✅ Final items array:`, items);
-
-      return {
-        data: { items }
-      };
-    } catch (error) {
-      console.error(`❌ JSON-RPC API Error for ${address} on ${network}:`, error);
-      throw error;
-    }
-  }
-
   async getAssetTransfers(address: string, network: string, fromBlock?: string) {
-    const url = this.getJsonRpcUrl(network);
-    
-    console.log(`🔄 Fetching asset transfers for ${address} on ${network}`);
-
-    const params: any = {
-      fromAddress: address,
-      toAddress: address,
-      category: ['external', 'internal', 'erc20', 'erc721', 'erc1155'],
-      withMetadata: true,
-      excludeZeroValue: true,
-      maxCount: 1000
-    };
-
-    if (fromBlock) {
-      params.fromBlock = fromBlock;
-    }
-
-    try {
-      const requestBody = {
-        id: 1,
-        jsonrpc: '2.0',
-        method: 'alchemy_getAssetTransfers',
-        params: [params]
-      };
-      
-      console.log(`📤 Asset Transfers Request:`, JSON.stringify(requestBody, null, 2));
-      
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: this.getHeaders(),
-        body: JSON.stringify(requestBody)
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error(`❌ Asset Transfers Error:`, errorText);
-        throw new Error(`Asset transfers request failed: ${response.status} ${response.statusText}. Response: ${errorText}`);
-      }
-
-      const result = await response.json();
-      console.log(`📦 Asset Transfers Response:`, JSON.stringify(result, null, 2));
-      
-      if (result.error) {
-        throw new Error(`Asset transfers error: ${result.error.message} (Code: ${result.error.code})`);
-      }
-
-      return result;
-    } catch (error) {
-      console.error(`❌ Asset transfers error for ${address} on ${network}:`, error);
-      throw error;
-    }
+    // This will be implemented later when we work on the transactions feature
+    console.log(`🔄 Asset transfers not yet implemented for ${address} on ${network}`);
+    return { result: { transfers: [] } };
   }
 }
 
