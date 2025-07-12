@@ -5,6 +5,7 @@
   import { alchemyAPI } from '$lib/utils/api.js';
   import { formatBalance, calculateValue, shortenAddress } from '$lib/utils/crypto.js';
   import type { Wallet, TokenBalance } from '$lib/types/index.js';
+  import BigNumber from 'bignumber.js';
 
   let wallets = $state<Wallet[]>([]);
   let balances = $state<TokenBalance[]>([]);
@@ -147,6 +148,35 @@
     return balances.find(b => b.wallet_address === walletAddress && b.symbol === symbol) || null;
   }
 
+  // Calculate subtotal for a specific token symbol
+  function getTokenSubtotal(symbol: string): { balance: string, value: string } {
+    const tokenBalances = balances.filter(b => b.symbol === symbol);
+    
+    let totalBalance = new BigNumber(0);
+    let totalValue = new BigNumber(0);
+    
+    tokenBalances.forEach(balance => {
+      totalBalance = totalBalance.plus(new BigNumber(balance.balance || '0'));
+      totalValue = totalValue.plus(new BigNumber(balance.value || '0'));
+    });
+    
+    return {
+      balance: totalBalance.toFixed(6),
+      value: totalValue.toFixed(5)
+    };
+  }
+
+  // Calculate grand total of all token values
+  function getGrandTotal(): string {
+    let grandTotal = new BigNumber(0);
+    
+    balances.forEach(balance => {
+      grandTotal = grandTotal.plus(new BigNumber(balance.value || '0'));
+    });
+    
+    return grandTotal.toFixed(2);
+  }
+
   async function copyToClipboard(text: string) {
     try {
       await navigator.clipboard.writeText(text);
@@ -241,6 +271,32 @@
             </tr>
           {/each}
         </tbody>
+        <tfoot>
+          <!-- Subtotal row -->
+          <tr class="subtotal-row">
+            <td class="subtotal-label">Subtotal</td>
+            {#each tokenSymbols as symbol}
+              {@const subtotal = getTokenSubtotal(symbol)}
+              <td class="subtotal-balance" title={`Total ${symbol}: ${subtotal.balance}`}>
+                {subtotal.balance}
+              </td>
+              <td class="subtotal-value" title={`Total ${symbol} value: $${subtotal.value}`}>
+                ${subtotal.value}
+              </td>
+            {/each}
+          </tr>
+          <!-- Grand total row -->
+          <tr class="grand-total-row">
+            <td class="grand-total-label">Total Value</td>
+            {#each tokenSymbols as symbol}
+              <td class="grand-total-spacer"></td>
+              <td class="grand-total-spacer"></td>
+            {/each}
+            <td class="grand-total-amount" title={`Grand total of all tokens: $${getGrandTotal()}`}>
+              ${getGrandTotal()}
+            </td>
+          </tr>
+        </tfoot>
       </table>
     </div>
   {/if}
@@ -253,6 +309,9 @@
       </p>
       <p>
         <strong>Total stored balances:</strong> {balances.length}
+      </p>
+      <p>
+        <strong>Grand Total Value:</strong> ${getGrandTotal()}
       </p>
       <p>
         <strong>Last update:</strong> {balances.length > 0 ? new Date(Math.max(...balances.map(b => new Date(b.updated_at).getTime()))).toLocaleString() : 'Never'}
@@ -435,6 +494,53 @@
   .balance-table th {
     background-color: #f8f9fa;
     font-weight: bold;
+  }
+  
+  .balance-table tfoot {
+    border-top: 2px solid #333;
+  }
+  
+  .subtotal-row {
+    background-color: #f8f9fa;
+    font-weight: bold;
+    border-top: 2px solid #333;
+  }
+  
+  .subtotal-label {
+    text-align: left !important;
+    font-weight: bold;
+    background-color: #e9ecef;
+  }
+  
+  .subtotal-balance,
+  .subtotal-value {
+    background-color: #f8f9fa;
+    font-weight: bold;
+  }
+  
+  .grand-total-row {
+    background-color: #e9ecef;
+    font-weight: bold;
+  }
+  
+  .grand-total-label {
+    text-align: left !important;
+    font-weight: bold;
+    background-color: #dee2e6;
+  }
+  
+  .grand-total-spacer {
+    border: 1px solid #ddd;
+    background-color: #e9ecef;
+  }
+  
+  .grand-total-amount {
+    background-color: #28a745;
+    color: white;
+    font-weight: bold;
+    font-size: 1.1em;
+    text-align: right;
+    border: 2px solid #1e7e34;
   }
   
   .wallet-cell {

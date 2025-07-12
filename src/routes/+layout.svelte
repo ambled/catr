@@ -15,7 +15,7 @@
 
 <nav class="navbar">
   <div class="nav-container">
-    <a href="/" class="nav-brand">Crypto Tracker</a>
+    <a href="/" class="nav-brand">Autonomi Transaction Reporter</a>
     
     {#if settings.hasApiKey}
       <div class="nav-links">
@@ -34,7 +34,6 @@
 </main>
 
 <style>
-  /* Same styles as before */
   .navbar {
     background-color: #343a40;
     padding: 1rem 0;
