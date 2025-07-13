@@ -1,6 +1,6 @@
 // src/lib/stores/storage.ts
 import { browser } from '$app/environment';
-import type { Wallet, TokenBalance, TokenPrice, Transaction } from '$lib/types/index.js';
+import type { Wallet, TokenBalance, TokenPrice, Transaction, AddressClassification, RawTransaction, GasTransaction, HistoricalPrice } from '$lib/types/index.js';
 
 class StorageService {
   private getItem<T>(key: string): T[] {
@@ -107,7 +107,7 @@ class StorageService {
     this.setItem('token_prices', prices);
   }
 
-  // Transactions
+  // Transactions (Legacy - keeping for compatibility)
   getTransactions(): Transaction[] {
     return this.getItem<Transaction>('transactions');
   }
@@ -131,6 +131,143 @@ class StorageService {
 
   getTransactionCount(address: string): number {
     return this.getTransactionsByWallet(address).length;
+  }
+
+  // Address Classifications
+  getAddressClassifications(): AddressClassification[] {
+    return this.getItem<AddressClassification>('address_classifications');
+  }
+
+  addAddressClassification(classification: Omit<AddressClassification, 'id'>): void {
+    const classifications = this.getAddressClassifications();
+    const newClassification: AddressClassification = {
+      ...classification,
+      id: Date.now(),
+      created_at: new Date().toISOString()
+    };
+    classifications.push(newClassification);
+    this.setItem('address_classifications', classifications);
+  }
+
+  removeAddressClassification(id: number): void {
+    const classifications = this.getAddressClassifications().filter(c => c.id !== id);
+    this.setItem('address_classifications', classifications);
+  }
+
+  // Raw Transactions
+  getRawTransactions(): RawTransaction[] {
+    return this.getItem<RawTransaction>('raw_transactions');
+  }
+
+  addRawTransactions(transactions: RawTransaction[]): void {
+    const existing = this.getRawTransactions();
+    const combined = [...existing];
+    
+    transactions.forEach(tx => {
+      if (!combined.find(t => t.id === tx.id)) {
+        combined.push(tx);
+      }
+    });
+    
+    this.setItem('raw_transactions', combined);
+  }
+
+  clearWalletTransactions(walletAddress: string): void {
+    const transactions = this.getRawTransactions().filter(t => t.wallet_address !== walletAddress);
+    this.setItem('raw_transactions', transactions);
+  }
+
+  getRawTransactionsByWallet(walletAddress: string): RawTransaction[] {
+    return this.getRawTransactions().filter(t => t.wallet_address === walletAddress);
+  }
+
+  getRawTransactionCount(walletAddress: string): number {
+    return this.getRawTransactionsByWallet(walletAddress).length;
+  }
+
+  // Gas Transactions
+  getGasTransactions(): GasTransaction[] {
+    return this.getItem<GasTransaction>('gas_transactions');
+  }
+
+  addGasTransactions(gasTransactions: GasTransaction[]): void {
+    const existing = this.getGasTransactions();
+    const combined = [...existing];
+    
+    gasTransactions.forEach(gas => {
+      if (!combined.find(g => g.id === gas.id)) {
+        combined.push(gas);
+      }
+    });
+    
+    this.setItem('gas_transactions', combined);
+  }
+
+  clearWalletGasTransactions(walletAddress: string): void {
+    const gasTransactions = this.getGasTransactions().filter(g => g.wallet_address !== walletAddress);
+    this.setItem('gas_transactions', gasTransactions);
+  }
+
+  // Historical Prices
+  getHistoricalPrices(): HistoricalPrice[] {
+    return this.getItem<HistoricalPrice>('historical_prices');
+  }
+
+  addHistoricalPrices(prices: HistoricalPrice[]): void {
+    const existing = this.getHistoricalPrices();
+    const combined = [...existing];
+    
+    prices.forEach(price => {
+      const existingIndex = combined.findIndex(p => 
+        (p.symbol === price.symbol || p.contract_address === price.contract_address) &&
+        p.network === price.network &&
+        p.timestamp === price.timestamp
+      );
+      
+      if (existingIndex >= 0) {
+        combined[existingIndex] = price;
+      } else {
+        combined.push(price);
+      }
+    });
+    
+    this.setItem('historical_prices', combined);
+  }
+
+  findClosestPrice(symbol: string, contractAddress: string | undefined, network: string, timestamp: string): HistoricalPrice | null {
+    const targetTime = new Date(timestamp).getTime();
+    
+    const prices = this.getHistoricalPrices().filter(p => 
+      (p.symbol === symbol || p.contract_address === contractAddress) &&
+      p.network === network &&
+      new Date(p.timestamp).getTime() <= targetTime
+    ).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    
+    return prices[0] || null;
+  }
+
+  // Clear all transaction-related data for a wallet
+  clearAllWalletData(walletAddress: string): void {
+    this.clearWalletTransactions(walletAddress);
+    this.clearWalletGasTransactions(walletAddress);
+    this.clearWalletBalances(walletAddress);
+  }
+
+  // Get statistics
+  getWalletStats(walletAddress: string): {
+    transactionCount: number;
+    gasTransactionCount: number;
+    balanceCount: number;
+    lastSync: string | null;
+  } {
+    const wallet = this.getWallets().find(w => w.address === walletAddress);
+    
+    return {
+      transactionCount: this.getRawTransactionCount(walletAddress),
+      gasTransactionCount: this.getGasTransactions().filter(g => g.wallet_address === walletAddress).length,
+      balanceCount: this.getTokenBalances().filter(b => b.wallet_address === walletAddress).length,
+      lastSync: wallet?.last_sync || null
+    };
   }
 }
 

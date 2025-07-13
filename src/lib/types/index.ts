@@ -51,3 +51,58 @@ export interface AlchemyResponse {
     }>;
   };
 }
+
+// src/lib/types/index.ts - Add these new types
+export interface AddressClassification {
+  id?: number;
+  name: string;
+  wallet_address?: string;
+  contract_address?: string;
+  transaction_class: 'Emission' | 'Uploads' | 'Purchase' | 'Burn' | 'AirDrop' | 'Swap' | 'OtherIncome' | 'Withdraw';
+  created_at?: string;
+}
+
+export interface RawTransaction {
+  id: string; // blockNum + uniqueId
+  wallet_address: string;
+  block_num: string;
+  unique_id: string;
+  hash: string;
+  from_address: string;
+  to_address: string;
+  value: string;
+  asset: string;
+  category: string;
+  contract_address?: string;
+  decimals?: number;
+  timestamp: string;
+  transaction_class?: string;
+  gas_used?: string;
+  gas_price?: string;
+  created_at?: string;
+}
+
+export interface GasTransaction {
+  id: string; // hash + '_gas'
+  wallet_address: string;
+  hash: string;
+  block_num: string;
+  gas_used: string;
+  gas_price: string;
+  gas_cost_eth: string;
+  gas_cost_usd: string;
+  timestamp: string;
+  created_at?: string;
+}
+
+export interface HistoricalPrice {
+  id?: number;
+  symbol?: string;
+  contract_address?: string;
+  network?: string;
+  price: string;
+  currency: string;
+  timestamp: string;
+  source: 'alchemy_balance' | 'alchemy_historical' | 'manual';
+  created_at?: string;
+}
