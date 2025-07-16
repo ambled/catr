@@ -6,8 +6,9 @@
   import { onMount } from 'svelte';
   import type { AddressClassification } from '$lib/types/index.js';
 
-  let apiKey = $state(settings.apiKey);
+  let apiKey = $state('');
   let error = $state('');
+  let success = $state('');
   let activeTab = $state<'api' | 'addresses'>('api');
   
   // Address classification form
@@ -21,7 +22,14 @@
   const transactionClasses = ['Emission', 'Uploads', 'Purchase', 'Burn', 'AirDrop', 'Swap', 'OtherIncome', 'Withdraw'] as const;
 
   onMount(() => {
+    // Initialize with current settings
+    apiKey = settings.apiKey;
     loadAddressClassifications();
+    
+    console.log('Settings page mounted:', {
+      hasApiKey: settings.hasApiKey,
+      apiKeyLength: apiKey.length
+    });
   });
 
   function loadAddressClassifications() {
@@ -29,17 +37,46 @@
   }
 
   function saveApiKey() {
+    error = '';
+    success = '';
+    
     if (!apiKey.trim()) {
       error = 'API Key is required';
       return;
     }
     
-    settings.apiKey = apiKey.trim();
-    error = 'API Key saved successfully';
-    setTimeout(() => error = '', 3000);
+    try {
+      settings.apiKey = apiKey.trim();
+      success = 'API Key saved successfully! You can now navigate to other pages.';
+      
+      console.log('API Key saved:', {
+        hasApiKey: settings.hasApiKey,
+        canNavigate: true
+      });
+      
+      // Clear success message after 5 seconds
+      setTimeout(() => {
+        success = '';
+      }, 5000);
+      
+    } catch (err) {
+      error = 'Failed to save API Key';
+      console.error('Error saving API key:', err);
+    }
+  }
+
+  function testNavigation() {
+    if (settings.hasApiKey) {
+      goto('/wallets');
+    } else {
+      error = 'Please save your API key first';
+    }
   }
 
   function addAddressClassification() {
+    error = '';
+    success = '';
+    
     if (!newName.trim()) {
       error = 'Name is required';
       return;
@@ -73,15 +110,33 @@
       newContractAddress = '';
       newTransactionClass = 'Uploads';
       error = '';
+      success = 'Address classification added successfully';
       loadAddressClassifications();
+      
+      setTimeout(() => {
+        success = '';
+      }, 3000);
+      
     } catch (err) {
       error = 'Failed to add address classification';
+      console.error('Error adding classification:', err);
     }
   }
 
   function removeAddressClassification(id: number) {
-    storage.removeAddressClassification(id);
-    loadAddressClassifications();
+    try {
+      storage.removeAddressClassification(id);
+      loadAddressClassifications();
+      success = 'Address classification removed';
+      
+      setTimeout(() => {
+        success = '';
+      }, 3000);
+      
+    } catch (err) {
+      error = 'Failed to remove address classification';
+      console.error('Error removing classification:', err);
+    }
   }
 </script>
 
@@ -92,14 +147,22 @@
     <button 
       class="tab" 
       class:active={activeTab === 'api'}
-      onclick={() => activeTab = 'api'}
+      onclick={() => {
+        activeTab = 'api';
+        error = '';
+        success = '';
+      }}
     >
       API Configuration
     </button>
     <button 
       class="tab" 
       class:active={activeTab === 'addresses'}
-      onclick={() => activeTab = 'addresses'}
+      onclick={() => {
+        activeTab = 'addresses';
+        error = '';
+        success = '';
+      }}
     >
       Address Classifications
     </button>
@@ -108,6 +171,22 @@
   {#if activeTab === 'api'}
     <div class="tab-content">
       <h2>Alchemy API Configuration</h2>
+      
+      <div class="api-status">
+        <div class="status-item">
+          <strong>Status:</strong> 
+          <span class="status-badge" class:success={settings.hasApiKey} class:error={!settings.hasApiKey}>
+            {settings.hasApiKey ? 'Configured' : 'Not Configured'}
+          </span>
+        </div>
+        
+        {#if settings.hasApiKey}
+          <div class="status-item">
+            <strong>Key Preview:</strong> 
+            <code>{settings.apiKey.slice(0, 8)}...{settings.apiKey.slice(-4)}</code>
+          </div>
+        {/if}
+      </div>
       
       <div class="form-group">
         <label for="apiKey">Alchemy API Key:</label>
@@ -118,15 +197,33 @@
           placeholder="Enter your Alchemy API key"
           class="form-control"
         />
+        <small class="form-text">
+          You can find your API key in the Alchemy dashboard at 
+          <a href="https://dashboard.alchemy.com/apps" target="_blank">dashboard.alchemy.com/apps</a>
+        </small>
       </div>
 
-      <button onclick={saveApiKey} class="btn btn-primary">
-        Save API Key
-      </button>
+      <div class="button-group">
+        <button onclick={saveApiKey} class="btn btn-primary">
+          Save API Key
+        </button>
+        
+        {#if settings.hasApiKey}
+          <button onclick={testNavigation} class="btn btn-secondary">
+            Test Navigation
+          </button>
+        {/if}
+      </div>
       
       {#if error}
-        <div class="message" class:error={error.includes('required') || error.includes('Failed')} class:success={error.includes('successfully')}>
+        <div class="message error">
           {error}
+        </div>
+      {/if}
+      
+      {#if success}
+        <div class="message success">
+          {success}
         </div>
       {/if}
     </div>
@@ -192,6 +289,10 @@
         
         {#if error}
           <div class="message error">{error}</div>
+        {/if}
+        
+        {#if success}
+          <div class="message success">{success}</div>
         {/if}
       </div>
 
@@ -287,6 +388,34 @@
     to { opacity: 1; }
   }
   
+  .api-status {
+    background-color: #f8f9fa;
+    padding: 1rem;
+    border-radius: 4px;
+    margin-bottom: 2rem;
+  }
+  
+  .status-item {
+    margin-bottom: 0.5rem;
+  }
+  
+  .status-badge {
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    font-weight: bold;
+  }
+  
+  .status-badge.success {
+    background-color: #d4edda;
+    color: #155724;
+  }
+  
+  .status-badge.error {
+    background-color: #f8d7da;
+    color: #721c24;
+  }
+  
   .form-group {
     margin-bottom: 1rem;
     flex: 1;
@@ -303,6 +432,18 @@
     padding: 0.5rem;
     border: 1px solid #ddd;
     border-radius: 4px;
+  }
+  
+  .form-text {
+    font-size: 0.875rem;
+    color: #6c757d;
+    margin-top: 0.25rem;
+  }
+  
+  .button-group {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 1rem;
   }
   
   .add-classification-form {
@@ -375,6 +516,11 @@
     color: white;
   }
   
+  .btn-secondary {
+    background-color: #6c757d;
+    color: white;
+  }
+  
   .btn-danger {
     background-color: #dc3545;
     color: white;
@@ -412,6 +558,10 @@
   
   @media (max-width: 768px) {
     .form-row {
+      flex-direction: column;
+    }
+    
+    .button-group {
       flex-direction: column;
     }
     

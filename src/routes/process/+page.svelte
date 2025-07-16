@@ -1,8 +1,8 @@
 <!-- src/routes/process/+page.svelte -->
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { storage } from '$lib/stores/storage.js';
-  import { transactionAPI } from '$lib/utils/transactionApi.js';
+  import { transactionAPI, type ImportProgress } from '$lib/utils/transactionApi.js';
   import { shortenAddress } from '$lib/utils/crypto.js';
   import type { Wallet } from '$lib/types/index.js';
 
@@ -11,9 +11,26 @@
   let processingWallet = $state<string | null>(null);
   let error = $state('');
   let success = $state('');
+  let progress = $state<ImportProgress | null>(null);
 
+  // Unique identifier for this session to prevent stale progress updates
+  let sessionId = $state(Date.now().toString());
+  
   onMount(() => {
     loadWallets();
+    
+    // Set up progress callback
+    transactionAPI.setProgressCallback((progressData) => {
+      // Only update if we're currently processing
+      if (loading && processingWallet) {
+        progress = progressData;
+      }
+    });
+  });
+
+  onDestroy(() => {
+    // Clean up progress callback when leaving page
+    transactionAPI.setProgressCallback(null);
   });
 
   function loadWallets() {
@@ -26,18 +43,22 @@
     loading = true;
     error = '';
     success = '';
+    progress = null;
+    sessionId = Date.now().toString(); // New session
     
     console.log('🚀 Starting bulk wallet processing');
     
     try {
-      for (const wallet of wallets) {
+      for (let i = 0; i < wallets.length; i++) {
+        const wallet = wallets[i];
         processingWallet = wallet.address;
-        console.log(`📊 Processing wallet: ${wallet.address}`);
+        
+        console.log(`📊 Processing wallet ${i + 1}/${wallets.length}: ${wallet.address}`);
         
         await transactionAPI.importTransactionsForWallet(wallet.address, 'arb-mainnet');
         
-        // Add delay between wallets to avoid rate limiting
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        // Brief pause between wallets
+        await new Promise(resolve => setTimeout(resolve, 500));
       }
       
       success = `Successfully processed ${wallets.length} wallets`;
@@ -48,6 +69,7 @@
     } finally {
       loading = false;
       processingWallet = null;
+      progress = null;
     }
   }
 
@@ -82,6 +104,8 @@
     processingWallet = walletAddress;
     error = '';
     success = '';
+    progress = null;
+    sessionId = Date.now().toString(); // New session
     
     try {
       await transactionAPI.importTransactionsForWallet(walletAddress, 'arb-mainnet');
@@ -93,6 +117,7 @@
     } finally {
       loading = false;
       processingWallet = null;
+      progress = null;
     }
   }
 
@@ -123,12 +148,113 @@
   function getWalletStats(address: string) {
     return storage.getWalletStats(address);
   }
+
+  function getProgressPercentage(): number {
+    if (!progress || progress.total === 0) return 0;
+    return Math.round((progress.current / progress.total) * 100);
+  }
+
+  function getStageDescription(stage: string): string {
+    switch (stage) {
+      case 'asset_transfers': return 'Importing Transactions';
+      case 'gas_fees': return 'Fetching Gas Fees';
+      case 'pricing': return 'Fetching Historical Prices';
+      case 'complete': return 'Import Complete';
+      default: return 'Processing';
+    }
+  }
+
+  function getElapsedTime(): string {
+    if (!progress) return '';
+    const elapsed = Date.now() - progress.startTime;
+    const seconds = Math.floor(elapsed / 1000);
+    const minutes = Math.floor(seconds / 60);
+    return minutes > 0 ? `${minutes}m ${seconds % 60}s` : `${seconds}s`;
+  }
+
+  // Database backup/restore functions
+  function exportDatabase() {
+    try {
+      const data = {
+        wallets: storage.getWallets(),
+        token_balances: storage.getTokenBalances(),
+        token_prices: storage.getTokenPrices(),
+        address_classifications: storage.getAddressClassifications(),
+        raw_transactions: storage.getRawTransactions(),
+        gas_transactions: storage.getGasTransactions(),
+        historical_prices: storage.getHistoricalPrices(),
+        exported_at: new Date().toISOString(),
+        version: '1.0'
+      };
+
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `autonomi-transactions-${new Date().toISOString().split('T')[0]}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      
+      success = 'Database exported successfully';
+    } catch (err) {
+      error = 'Failed to export database';
+    }
+  }
+
+  function importDatabase() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json';
+    input.onchange = (event) => {
+      const file = (event.target as HTMLInputElement).files?.[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const data = JSON.parse(e.target?.result as string);
+          
+          if (!confirm('This will replace ALL existing data. Are you sure?')) {
+            return;
+          }
+
+          // Clear existing data
+          localStorage.clear();
+          
+          // Import new data
+          if (data.wallets) storage.setItem('wallets', data.wallets);
+          if (data.token_balances) storage.setItem('token_balances', data.token_balances);
+          if (data.token_prices) storage.setItem('token_prices', data.token_prices);
+          if (data.address_classifications) storage.setItem('address_classifications', data.address_classifications);
+          if (data.raw_transactions) storage.setItem('raw_transactions', data.raw_transactions);
+          if (data.gas_transactions) storage.setItem('gas_transactions', data.gas_transactions);
+          if (data.historical_prices) storage.setItem('historical_prices', data.historical_prices);
+          
+          loadWallets();
+          success = `Database imported successfully (exported: ${data.exported_at})`;
+          
+        } catch (err) {
+          error = 'Failed to import database - invalid file format';
+        }
+      };
+      reader.readAsText(file);
+    };
+    input.click();
+  }
 </script>
 
 <div class="container">
   <div class="header">
     <h1>Transaction Processing</h1>
     <div class="bulk-actions">
+      <button onclick={exportDatabase} class="btn btn-secondary">
+        Export Database
+      </button>
+      <button onclick={importDatabase} class="btn btn-secondary">
+        Import Database
+      </button>
       <button 
         onclick={processAllWallets} 
         disabled={loading || wallets.length === 0}
@@ -158,10 +284,31 @@
     </div>
   {/if}
 
-  {#if loading && processingWallet}
-    <div class="processing-status">
-      <div class="spinner"></div>
-      <span>Processing: {shortenAddress(processingWallet)}</span>
+  {#if loading && processingWallet && progress}
+    <div class="progress-container">
+      <div class="progress-header">
+        <h3>Processing: {shortenAddress(processingWallet)}</h3>
+        <div class="progress-stats">
+          <span class="stage">{getStageDescription(progress.stage)}</span>
+          <span class="time">Elapsed: {getElapsedTime()}</span>
+        </div>
+      </div>
+      
+      <div class="progress-bar">
+        <div class="progress-fill" style="width: {getProgressPercentage()}%"></div>
+        <div class="progress-text">
+          {progress.current} / {progress.total} ({getProgressPercentage()}%)
+        </div>
+      </div>
+      
+      <div class="progress-details">
+        <div class="current-item">{progress.currentItem}</div>
+        {#if progress.stage === 'pricing'}
+          <div class="pricing-note">
+            <small>⏱️ Historical pricing requests have rate limits and may take time</small>
+          </div>
+        {/if}
+      </div>
     </div>
   {/if}
 
@@ -233,24 +380,14 @@
   {/if}
 
   <div class="info-section">
-    <h3>📋 Transaction Processing Steps</h3>
-    <ol>
-      <li><strong>Import Raw Transactions:</strong> Fetches asset transfers using alchemy_getAssetTransfers API with pagination</li>
-      <li><strong>Import Gas Fees:</strong> Retrieves transaction receipts to calculate gas costs in ETH and USD</li>
-      <li><strong>Import Token Prices:</strong> Fetches historical pricing data with 5-minute resolution around transaction timestamps</li>
-      <li><strong>Classify Transactions:</strong> Applies address classifications to categorize transaction types</li>
-    </ol>
-    
-    <div class="processing-notes">
-      <h4>⚠️ Important Notes:</h4>
-      <ul>
-        <li>Processing can take several minutes per wallet due to API rate limits</li>
-        <li>Historical price data is fetched 2 minutes before to 20 minutes after each transaction</li>
-        <li>Gas fees are calculated using ETH prices at transaction time</li>
-        <li>Transactions are automatically classified based on configured address rules</li>
-        <li>ANT token pricing may not be available through Alchemy's historical API</li>
-      </ul>
-    </div>
+    <h3>📋 Transaction Processing Features</h3>
+    <ul>
+      <li><strong>Intelligent Resume:</strong> Continues from the last imported transaction</li>
+      <li><strong>Rate Limit Handling:</strong> Automatically backs off on 429 errors</li>
+      <li><strong>Price Caching:</strong> Avoids duplicate price requests within 5-minute windows</li>
+      <li><strong>Progress Tracking:</strong> Shows real-time import progress with timestamps</li>
+      <li><strong>Database Backup:</strong> Export/import your complete transaction database</li>
+    </ul>
   </div>
 </div>
 
@@ -276,29 +413,74 @@
     flex-wrap: wrap;
   }
   
-  .processing-status {
+  .progress-container {
+    background-color: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 8px;
+    padding: 1.5rem;
+    margin-bottom: 2rem;
+  }
+  
+  .progress-header {
     display: flex;
+    justify-content: space-between;
     align-items: center;
-    gap: 1rem;
-    padding: 1rem;
-    background-color: #e3f2fd;
-    border: 1px solid #2196f3;
-    border-radius: 4px;
     margin-bottom: 1rem;
   }
   
-  .spinner {
-    width: 20px;
-    height: 20px;
-    border: 2px solid #f3f3f3;
-    border-top: 2px solid #2196f3;
-    border-radius: 50%;
-    animation: spin 1s linear infinite;
+  .progress-header h3 {
+    margin: 0;
+    color: #495057;
   }
   
-  @keyframes spin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
+  .progress-stats {
+    display: flex;
+    gap: 1rem;
+    font-size: 0.9rem;
+    color: #6c757d;
+  }
+  
+  .progress-bar {
+    position: relative;
+    height: 30px;
+    background-color: #e9ecef;
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 1rem;
+  }
+  
+  .progress-fill {
+    height: 100%;
+    background-color: #007bff;
+    transition: width 0.3s ease;
+  }
+  
+  .progress-text {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-weight: bold;
+    color: #212529;
+    font-size: 0.9rem;
+  }
+  
+  .progress-details {
+    font-size: 0.9rem;
+    color: #6c757d;
+  }
+  
+  .current-item {
+    font-weight: bold;
+    margin-bottom: 0.5rem;
+  }
+  
+  .pricing-note {
+    color: #856404;
+    background-color: #fff3cd;
+    padding: 0.5rem;
+    border-radius: 4px;
+    border: 1px solid #ffeaa7;
   }
   
   .message {
@@ -398,12 +580,10 @@
     border: 1px solid #dee2e6;
   }
   
-  .info-section h3,
-  .info-section h4 {
+  .info-section h3 {
     margin-top: 0;
   }
   
-  .info-section ol,
   .info-section ul {
     margin: 1rem 0;
     padding-left: 1.5rem;
@@ -411,14 +591,6 @@
   
   .info-section li {
     margin-bottom: 0.5rem;
-  }
-  
-  .processing-notes {
-    margin-top: 2rem;
-    padding: 1rem;
-    background-color: #fff;
-    border-radius: 4px;
-    border: 1px solid #ffc107;
   }
   
   .btn {
@@ -441,6 +613,11 @@
     color: white;
   }
   
+  .btn-secondary {
+    background-color: #6c757d;
+    color: white;
+  }
+  
   .btn-danger {
     background-color: #dc3545;
     color: white;
@@ -459,6 +636,16 @@
     
     .bulk-actions {
       justify-content: center;
+    }
+    
+    .progress-header {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 0.5rem;
+    }
+    
+    .progress-stats {
+      justify-content: space-between;
     }
     
     .wallets-table {

@@ -5,11 +5,25 @@
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
 
+  let mounted = $state(false);
+
   onMount(() => {
-    // Redirect to settings if no API key
-    if (!settings.hasApiKey && $page.url.pathname !== '/settings') {
-      goto('/settings');
-    }
+    mounted = true;
+    
+    // Give settings time to initialize
+    setTimeout(() => {
+      console.log('Layout mounted - checking API key:', {
+        hasApiKey: settings.hasApiKey,
+        isInitialized: settings.isInitialized,
+        currentPath: $page.url.pathname
+      });
+      
+      // Only redirect if we're not already on settings and don't have API key
+      if (!settings.hasApiKey && !$page.url.pathname.startsWith('/settings')) {
+        console.log('Redirecting to settings - no API key');
+        goto('/settings');
+      }
+    }, 100);
   });
 </script>
 
@@ -17,20 +31,24 @@
   <div class="nav-container">
     <a href="/" class="nav-brand">Autonomi Transaction Reporter</a>
     
-    {#if settings.hasApiKey}
+    {#if mounted && settings.hasApiKey}
       <div class="nav-links">
         <a href="/wallets" class:active={$page.url.pathname === '/wallets'}>Wallets</a>
         <a href="/balances" class:active={$page.url.pathname === '/balances'}>Balances</a>
         <a href="/process" class:active={$page.url.pathname === '/process'}>Process</a>
         <a href="/transactions" class:active={$page.url.pathname === '/transactions'}>Transactions</a>
-        <a href="/settings" class:active={$page.url.pathname === '/settings'}>Settings</a>
+        <a href="/settings" class:active={$page.url.pathname.startsWith('/settings')}>Settings</a>
       </div>
     {/if}
   </div>
 </nav>
 
 <main>
-  <slot />
+  {#if mounted}
+    <slot />
+  {:else}
+    <div class="loading">Loading...</div>
+  {/if}
 </main>
 
 <style>
@@ -74,5 +92,14 @@
   
   main {
     min-height: calc(100vh - 100px);
+  }
+  
+  .loading {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 200px;
+    font-size: 1.2rem;
+    color: #666;
   }
 </style>
